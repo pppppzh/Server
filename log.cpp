@@ -2,78 +2,80 @@
 
 namespace MyServer
 {
-    Logger::Logger(const std::string& name)
-    :m_name(name)
+    const char *LogLevel::ToString(LogLevel::Level level)
     {
-
-    }
-
-    void Logger::log(Level level, LogEvent::ptr event)
-    {
-
-    }
-
-    void Logger::debug(LogEvent::ptr event)
-    {
-
-    }
-
-    void Logger::info(LogEvent::ptr event)
-    {
-
-    }
-
-    void Logger::warn(LogEvent::ptr event)
-    {
-
-    }
-
-    void Logger::error(LogEvent::ptr event)
-    {
-
-    }
-
-    void Logger::addAppender(LogAppender::ptr appender)
-    {
-        m_appenders.push_back(appender);
-    }
-
-    void Logger::delAppender(LogAppender::ptr appender)
-    {
-        for(auto it=m_appenders.begin();it!=m_appenders.end();it++)
+        switch (level)
         {
-            if(*it==appender)
-            {
-                m_appenders.erase(it);
-                break;
-            }
+#define XX(name)         \
+    case LogLevel::name: \
+        return #name;
+            XX(FATAL);
+            XX(ALERT);
+            XX(CRIT);
+            XX(ERROR);
+            XX(WARN);
+            XX(NOTICE);
+            XX(INFO);
+            XX(DEBUG);
+#undef XX
+        default:
+            return "UNKNOW";
         }
+        return "UNKNOW";
     }
 
-    void StdoutLogAppender::log(Level level, LogEvent::ptr event)
+    LogLevel::Level LogLevel::FromString(const std::string &str)
     {
-        if(level>=m_level)
-        {
-            std::cout<< m_formatter->format(event);
-        }
+#define XX(level, v)            \
+    if (str == #v)              \
+    {                           \
+        return LogLevel::level; \
+    }
+        XX(FATAL, fatal);
+        XX(ALERT, alert);
+        XX(CRIT, crit);
+        XX(ERROR, error);
+        XX(WARN, warn);
+        XX(NOTICE, notice);
+        XX(INFO, info);
+        XX(DEBUG, debug);
+
+        XX(FATAL, FATAL);
+        XX(ALERT, ALERT);
+        XX(CRIT, CRIT);
+        XX(ERROR, ERROR);
+        XX(WARN, WARN);
+        XX(NOTICE, NOTICE);
+        XX(INFO, INFO);
+        XX(DEBUG, DEBUG);
+#undef XX
+        return LogLevel::UNKNOW;
     }
 
-    void FileLogAppender::log(Level level, LogEvent::ptr event)
+    LogEvent::LogEvent(const std::string &logger_name, LogLevel::Level level, const char *file, int32_t line,
+                       int64_t elapse, uint32_t thread_id, uint64_t fiber_id, time_t time, const std::string &thread_name)
+        : m_level(level), m_file(file), m_line(line), m_elapse(elapse), m_threadId(thread_id), m_fiberId(fiber_id)
+        , m_time(time), m_threadName(thread_name), m_loggerName(logger_name)
     {
-        if(level>=m_level)
-        {
-            m_filestream << m_formatter->format(event);
-        }
     }
 
-    bool FileLogAppender::reopen()
+    void LogEvent::printf(const char* fmt,...)
     {
-        if(m_filestream)
+        va_list ap;
+        va_start(ap,fmt);
+        vprintf(fmt,ap);
+        va_end(ap);
+    }
+
+    void LogEvent::vprintf(const char* fmt,va_list ap)
+    {
+        char* buf = nullptr;
+        int len = vasprintf(&buf,fmt,ap);
+        if(len!=-1)
         {
-            m_filestream.close();
+            m_ss << std::string(buf,len);
+            free(buf);
         }
-        m_filestream.open(m_filename);
-        return !!m_filestream;
     }
 
 } // end MyServer
