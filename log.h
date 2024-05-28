@@ -6,7 +6,11 @@
 #include <memory>
 #include <list>
 #include <sstream>
+#include <sstream>
 #include <fstream>
+#include <vector>
+#include <stdarg.h>
+#include <map>
 #include <vector>
 #include <stdarg.h>
 #include <map>
@@ -111,10 +115,6 @@ namespace MyServer
 
     class LogFormatter
     {
-    private:
-        std::string m_pattern;                // 日志格式模板
-        std::vector<FormatItem::ptr> m_items; // 解析后格式模板数组
-        bool m_error = false;                 // 是否出错
     public:
         typedef std::shared_ptr<LogFormatter> ptr;
 
@@ -174,7 +174,13 @@ namespace MyServer
             */
             virtual void format(std::ostream &os, LogEvent::ptr event) = 0;
         };
+        
+    private:
+        std::string m_pattern;                // 日志格式模板
+        std::vector<FormatItem::ptr> m_items; // 解析后格式模板数组
+        bool m_error = false;                 // 是否出错
     };
+
 
 } // end MyServer
 
