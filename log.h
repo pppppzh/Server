@@ -181,6 +181,8 @@ namespace MyServer
         bool m_error = false;                 // 是否出错
     };
 
+    
+
 
 } // end MyServer
 
