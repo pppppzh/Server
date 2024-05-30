@@ -6,14 +6,12 @@
 #include <memory>
 #include <list>
 #include <sstream>
-#include <sstream>
+#include <iostream>
 #include <fstream>
 #include <vector>
 #include <stdarg.h>
 #include <map>
-#include <vector>
-#include <stdarg.h>
-#include <map>
+#include <functional>
 
 namespace MyServer
 {
@@ -167,22 +165,159 @@ namespace MyServer
         {
         public:
             typedef std::shared_ptr<FormatItem> ptr;
-            virtual ~FormatItem();
+            virtual ~FormatItem(){};
 
             /*
             @brief 格式化日志事件
             */
             virtual void format(std::ostream &os, LogEvent::ptr event) = 0;
         };
-        
+
     private:
         std::string m_pattern;                // 日志格式模板
         std::vector<FormatItem::ptr> m_items; // 解析后格式模板数组
         bool m_error = false;                 // 是否出错
     };
 
-    
+    /*
+    @brief 日志输出地
+    */
+    class LogAppender
+    {
+    public:
+        typedef std::shared_ptr<LogAppender> ptr;
+        typedef Spinlock MutexType;
 
+        LogAppender(LogFormatter::ptr defaultformatter) : m_defaultformatter(defaultformatter){};
+        virtual ~LogAppender(){};
+
+        void setFormatter(LogFormatter::ptr fmt);
+        LogFormatter::ptr getFormatter();
+
+        /*
+         @brief 写入日志
+         */
+        virtual void log(LogEvent::ptr event) = 0;
+
+        /*
+         @brief 日志输出目标的配置转为yaml string
+         */
+        virtual std::string toYamlString() = 0;
+
+    protected:
+        MutexType m_mutex;
+        LogFormatter::ptr m_formatter;        // 日志格式
+        LogFormatter::ptr m_defaultformatter; // 默认日志格式
+    };
+
+    /*
+    @brief 输出到控制台的Appender
+    */
+    class StdoutLogAppender : public LogAppender
+    {
+    public:
+        typedef std::shared_ptr<StdoutLogAppender> ptr;
+
+        StdoutLogAppender() : LogAppender(LogFormatter::ptr(new LogFormatter)) {}
+
+        void log(LogEvent::ptr event);
+        std::string toYamlString();
+    };
+
+    /*
+    @brief 输出到文件的Appender
+    */
+    class FileLogAppender : public LogAppender
+    {
+    public:
+        typedef std::shared_ptr<FileLogAppender> ptr;
+
+        FileLogAppender(const std::string &file);
+
+        bool reopen();
+        void log(LogEvent::ptr event);
+        std::string toYamlString();
+
+    private:
+        std::string m_filename;     // 文件路径
+        std::ofstream m_filestream; // 文件流
+        uint64_t m_lastTime = 0;    // 最近打开时间
+        bool m_reopenError = false; // 打开错误标识
+    };
+
+    /*
+    @brief 日志器
+    */
+    class Logger
+    {
+    public:
+        typedef std::shared_ptr<Logger> ptr;
+        typedef Spinlock MutexType;
+
+        Logger(const std::string &name = "default");
+
+        const std::string &getName() const { return m_name; }
+        const uint64_t &getCreateTime() const { return m_createTime; }
+        void setLevel(LogLevel::Level level) { m_level = level; }
+        LogLevel::Level getLevel() const { return m_level; }
+        void addAppender(LogAppender::ptr appender);
+        void delAppender(LogAppender::ptr appender);
+        void clearAppenders();
+        void log(LogEvent::ptr event);
+        std::string toYamlString();
+
+    private:
+        MutexType m_mutex;
+        std::string m_name;                      // 日志器名称
+        LogLevel::Level m_level;                 // 等级
+        std::list<LogAppender::ptr> m_appenders; // LogAppender集合
+        uint64_t m_createTime;                   // 创建时间（毫秒）
+    }
+
+    /*
+    @brief 日志事件包装器
+    */
+    class LogEventWrap
+    {
+    public:
+        LogEventWrap(Logger::ptr logger, LogEvent::ptr event);
+        /*
+        @brief 析构函数
+        @details 日志事件在析构时由日志器进行输出
+        */
+        ~LogEventWrap();
+        LogEvent::ptr getLogEvent() const { return m_event; }
+
+    private:
+        Logger::ptr m_logger;
+        LogEvent::ptr m_event;
+    }
+
+    /*
+    @brief 日志器管理类
+    */
+    class LoggerManager
+    {
+    public:
+        typedef Spinlock MutexType;
+        LoggerManager();
+        // void init();
+
+        /*
+        @brief 获取指定名称的日志器
+        @note 如果指定名称的日志器未找到就新创建一个，但是新创建的Logger不带Appender
+        */
+        Logger::ptr getLogger(const std::string &name);
+        Logger::ptr getRoot() { return m_root; }
+        std::string toYamlString();
+
+    private:
+        MutexType m_mutex;
+        std::map<std::string, Logger::ptr> m_loggers; // 日志器集合
+        Logger::ptr m_root;                           // root日志器
+    }
+
+    typedef  Singleton<LoggerManager> LoggerMgr; // 日志器管理类单例
 
 } // end MyServer
 

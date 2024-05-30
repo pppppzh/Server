@@ -169,7 +169,7 @@ namespace MyServer
             strftime(buf, sizeof(buf), m_format.c_str(), &tm); // 根据m_format格式将tm中保存的信息放入buf
             os << buf;
         }
-    }
+    };
 
     class FileNameFormatItem : public LogFormatter::FormatItem
     {
@@ -252,7 +252,8 @@ namespace MyServer
 
         for (size_t i = 0; i < m_pattern.size(); i++)
         {
-            if (m_pattern[i] == '%')
+            std::string c = std::string(1, m_pattern[i]);
+            if (c == "%")
             {
                 if (parsing_string)
                 {
@@ -265,7 +266,7 @@ namespace MyServer
                 }
                 else
                 {
-                    patterns.push_back(std::make_pair(1, m_pattern[i]));
+                    patterns.push_back(std::make_pair(1, c));
                     parsing_string = true;
                 }
             }
@@ -273,19 +274,19 @@ namespace MyServer
             {
                 if (parsing_string)
                 {
-                    tmp += m_pattern[i];
+                    tmp += c;
                 }
                 else
                 {
-                    patterns.push_back(std::make_pair(1, m_pattern[i]));
+                    patterns.push_back(std::make_pair(1, c));
                     parsing_string = true;
-                    if (m_pattern[i] == 'd')
+                    if (c == "d")
                     {
-                        if (++i < m_pattern.size() && m_pattern[i] != '{')
+                        if (++i < m_pattern.size() && c != "{")
                             continue;
-                        while (++i < m_pattern.size() && m_pattern[i] != '}')
+                        while (++i < m_pattern.size() && c != "}")
                         {
-                            dateformat += m_pattern[i];
+                            dateformat += c;
                         }
                         if (i > m_pattern.size())
                         {
@@ -301,26 +302,26 @@ namespace MyServer
         if (!tmp.empty())
             patterns.push_back(std::make_pair(0, std::move(tmp)));
         static std::map<std::string, std::function<FormatItem::ptr(const std::string &str)>> format_items =
-        {
+            {
 #define XX(str, c)                                                               \
     {                                                                            \
-        #str, [](const std::string &fmt) { return FormatItem::ptr(new C(fmt)); } \
+        #str, [](const std::string &fmt) { return FormatItem::ptr(new c(fmt)); } \
     }
-            XX(m, MessageFormatItem),     // m:消息
-            XX(p, LevelFormatItem),       // p:日志级别
-            XX(c, LoggerNameFormatItem),  // c:日志器名称
-            XX(d, DateTimeFormatItem),    // d:日期时间
-            XX(r, ElapseFormatItem),      // r:累计毫秒数
-            XX(f, FileNameFormatItem),    // f:文件名
-            XX(l, LineFormatItem),        // l:行号
-            XX(t, ThreadIdFormatItem),    // t:编程号
-            XX(F, FiberIdFormatItem),     // F:协程号
-            XX(N, ThreadNameFormatItem),  // N:线程名称
-            XX(%, PercentSignFormatItem), // %:百分号
-            XX(T, TabFormatItem),         // T:制表符
-            XX(n, NewLineFormatItem),     // n:换行符
+                XX(m, MessageFormatItem),     // m:消息
+                XX(p, LevelFormatItem),       // p:日志级别
+                XX(c, LoggerNameFormatItem),  // c:日志器名称
+                XX(d, DateTimeFormatItem),    // d:日期时间
+                XX(r, ElapseFormatItem),      // r:累计毫秒数
+                XX(f, FileNameFormatItem),    // f:文件名
+                XX(l, LineFormatItem),        // l:行号
+                XX(t, ThreadIdFormatItem),    // t:编程号
+                XX(F, FiberIdFormatItem),     // F:协程号
+                XX(N, ThreadNameFormatItem),  // N:线程名称
+                XX(%, PercentSignFormatItem), // %:百分号
+                XX(T, TabFormatItem),         // T:制表符
+                XX(n, NewLineFormatItem),     // n:换行符
 #undef XX
-        }
+            };
 
         for (auto &v : patterns)
         {
@@ -368,4 +369,190 @@ namespace MyServer
         return os;
     }
 
+    void LogAppender::setFormatter(LogFormatter::ptr fmt)
+    {
+        MutexType::Lock lock(m_mutex);
+        m_formatter = fmt;
+    }
+
+    LogFormatter::ptr LogAppender::getFormatter()
+    {
+        MutexType::Lock lock(m_mutex);
+        return m_formatter ? m_formatter : m_defaultformatter;
+    }
+
+    void StdoutLogAppender::log(LogEvent::ptr event)
+    {
+        getFormatter()->format(std::cout, event);
+    }
+
+    std::string StdoutLogAppender::toYamlString()
+    {
+        MutexType::Lock lock(m_mutex);
+        YAML::Node node;
+        node["type"] = "StdoutLogAppender";
+        node["pattern"] = m_formatter->getPattern();
+        std::stringstream ss;
+        ss << node;
+        return ss.str();
+    }
+
+    FileLogAppender::FileLogAppender(const std::string &file)
+        : m_filename(file), LogAppender(LogFormatter::ptr(new LogFormatter))
+    {
+        if (!reopen())
+            std::cout << "reopen file " << m_filename << " error" << std::endl;
+    }
+
+    bool FileLogAppender::reopen()
+    {
+        MutexType::Lock lock(m_mutex);
+        if (m_filestream)
+            m_filestream.close();
+        m_filestream.open(m_filename, std::ios::app);
+        m_reopenError = !m_filestream;
+        return !m_reopenError;
+    }
+
+    void FileLogAppender::log(LogEvent::ptr event)
+    {
+        time_t now = event->getTime();
+        if (now >= (m_lastTime + 3)) // 如果一个日志事件距离上次写日志超过3秒，那就重新打开一次日志文件
+        {
+            if (!reopen())
+            {
+                std::cout << "reopen file " << m_filename << " error" << std::endl;
+                return;
+            }
+        }
+        m_lastTime = now;
+        MutexType::Lock lock(m_mutex);
+        if (m_formatter)
+        {
+            if (!m_formatter->format(m_filestream, event))
+            {
+                std::cout << "[ERROR] FileLogAppender::log() format error" << std::endl;
+            }
+        }
+        else
+        {
+            if (!m_defaultformatter->format(m_filestream, event))
+            {
+                std::cout << "[ERROR] FileLogAppender::log() format error" << std::endl;
+            }
+        }
+    }
+
+    std::string FileLogAppender::toYamlString()
+    {
+        MutexType::Lock lock(m_mutex);
+        YAML::Node node;
+        node["type"] = "FileLogAppender";
+        node["file"] = m_filename;
+        node["pattern"] = m_formatter ? m_formatter->getPattern() : m_defaultformatter->getPattern();
+        std::stringstream ss;
+        ss << node;
+        return ss.str();
+    }
+
+    Logger::Logger(const std::string &name)
+        : m_name(name), m_level(LogLevel::INFO), m_createTime(GetElapsedMS())
+    {
+    }
+
+    void Logger::addAppender(LogAppender::ptr appender)
+    {
+        MutexType::Lock lock(m_mutex);
+        m_appenders.push_back(appender);
+    }
+
+    void Logger::delAppender(LogAppender::ptr appender)
+    {
+        MutexType::Lock lock(m_mutex);
+        for (auto it = m_appenders.begin(); it != m_appenders.end(); it++)
+        {
+            if (*it == appender)
+            {
+                m_appenders.erase(it);
+                return;
+            }
+        }
+    }
+
+    void Logger::clearAppenders()
+    {
+        MutexType::Lock lock(m_mutex);
+        m_appenders.clear();
+    }
+
+    void Logger::log(LogEvent::ptr event)
+    {
+        if (event->getLevel() <= m_level)
+        {
+            for (auto &i : m_appenders)
+            {
+                i->log(event);
+            }
+        }
+    }
+
+    std::string Logger::toYamlString()
+    {
+        MutexType::Lock lock(m_mutex);
+        YAML::Node node;
+        node["name"] = m_name;
+        node["level"] = LogLevel::ToString(m_level);
+        for (auto &i : m_appenders)
+        {
+            node["appenders"].push_back(YAML::Load(i->toYamlString()));
+        }
+        std::stringstream ss;
+        ss << node;
+        return ss.str();
+    }
+
+    LogEventWrap::LogEventWrap(Logger::ptr logger, LogEvent::ptr event)
+        : m_logger(logger), m_event(event)
+    {
+    }
+
+    LogEventWrap::~LogEventWrap()
+    {
+        m_logger->log(m_event);
+    }
+
+    LoggerManager::LoggerManager()
+        : m_root(new Logger("root"))
+    {
+        m_root->addAppender(LogAppender::ptr(new StdoutLogAppender));
+        m_loggers[m_root->getName()] = m_root;
+        init();
+    }
+
+    Logger::ptr LoggerManager::getLogger(const std::string &name)
+    {
+        MutexType::Lock lock(m_mutex);
+        auto it = m_loggers.find(name);
+        if (it != m_loggers.end())
+        {
+            return it->second;
+        }
+
+        Logger::ptr logger(new Logger(name));
+        m_loggers[name] = logger;
+        return logger;
+    }
+
+    std::string LoggerManager::toYamlString()
+    {
+        MutexType::Lock lock(m_mutex);
+        YAML::Node node;
+        for (auto &i : m_loggers)
+        {
+            node.push_back(YAML::Load(i.second->toYamlString()));
+        }
+        std::stringstream ss;
+        ss << node;
+        return ss.str();
+    }
 } // end MyServer
